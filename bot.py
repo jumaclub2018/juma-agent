@@ -78,16 +78,9 @@ SYSTEM = """Ты личный ИИ-агент владельца клуба дз
 Язык: русский."""
 
 
-async def handle_text(update: Update, context):
-    if update.message.chat_id != OWNER_ID:
-        return
-
-    user_text = update.message.text
+async def run_agent(update: Update, user_text: str):
     uid = update.message.chat_id
-
-    # Фото в очереди?
     photo_bytes = pending_photos.get(uid)
-
     messages = [{"role": "user", "content": user_text}]
     await update.message.reply_text("⏳")
 
@@ -158,8 +151,13 @@ async def handle_text(update: Update, context):
             messages.append({"role": "user", "content": tool_results})
 
 
+async def handle_text(update: Update, context):
+    if update.message.chat_id != OWNER_ID:
+        return
+    await run_agent(update, update.message.text)
+
+
 async def handle_photo(update: Update, context):
-    """Пользователь прислал фото — сохраняем для публикации."""
     if update.message.chat_id != OWNER_ID:
         return
 
@@ -171,9 +169,7 @@ async def handle_photo(update: Update, context):
 
     caption = update.message.caption
     if caption:
-        # Фото + подпись/команда — сразу обрабатываем
-        update.message.text = caption
-        await handle_text(update, context)
+        await run_agent(update, caption)
     else:
         await update.message.reply_text(
             "📸 Фото сохранено. Напиши что с ним сделать — например:\n"
