@@ -1,11 +1,9 @@
-import os
+import os, json, tempfile
 from pathlib import Path
-import tempfile
 
 IG_USERNAME = os.environ.get("IG_USERNAME", "")
-IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
+IG_SESSION = os.environ.get("IG_SESSION", "")  # JSON сессии из Railway
 
-# Клиент создаётся один раз и переиспользуется
 _client = None
 
 
@@ -15,14 +13,13 @@ def get_client():
         return _client
     from instagrapi import Client
     cl = Client()
-    # Сохраняем сессию чтобы не логиниться каждый раз
-    session_file = Path("ig_session.json")
-    if session_file.exists():
-        cl.load_settings(session_file)
-        cl.login(IG_USERNAME, IG_PASSWORD)
+    if IG_SESSION:
+        # Грузим сохранённую сессию — не нужен пароль и новый логин
+        settings = json.loads(IG_SESSION)
+        cl.set_settings(settings)
+        cl.login(IG_USERNAME, "")  # переавторизация по сессии
     else:
-        cl.login(IG_USERNAME, IG_PASSWORD)
-        cl.dump_settings(session_file)
+        raise RuntimeError("IG_SESSION не задан. Запусти get_ig_session.py локально.")
     _client = cl
     return cl
 
