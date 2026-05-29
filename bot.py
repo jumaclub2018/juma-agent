@@ -2,7 +2,7 @@ import os, json, anthropic
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
-from tools.instagram import publish_photo
+from tools.instagram_instagrapi import publish_photo
 from tools.broadcast import send_broadcast
 
 TELEGRAM_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
@@ -136,9 +136,9 @@ async def handle_text(update: Update, context):
                         result = "❌ Нет фото для публикации. Отправь фото вместе с запросом."
                     else:
                         pending_photos.pop(uid, None)
-                        pub = publish_photo(photo_bytes, caption, schedule_time)
+                        pub = publish_photo(photo_bytes, caption)
                         if pub["ok"]:
-                            result = f"✅ Пост отправлен в SMMplanner! ID: {pub['post_id']}"
+                            result = f"✅ Опубликовано!\n{pub['url']}"
                         else:
                             result = f"❌ Ошибка: {pub['error']}"
 
