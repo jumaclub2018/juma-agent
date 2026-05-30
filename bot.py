@@ -2,7 +2,7 @@ import os, json, anthropic
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
-from tools.instagram_playwright import publish_photo
+from tools.instagram_local_agent import publish_photo
 from tools.broadcast import send_broadcast
 
 TELEGRAM_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
@@ -136,7 +136,7 @@ async def run_agent(update: Update, user_text: str):
                         result = "❌ Нет фото для публикации. Отправь фото вместе с запросом."
                     else:
                         pending_photos.pop(uid, None)
-                        pub = await publish_photo(photo_bytes, caption)
+                        pub = publish_photo(photo_bytes, caption)
                         if pub["ok"]:
                             result = f"✅ Опубликовано!\n{pub['url']}"
                         else:
