@@ -1,5 +1,10 @@
-import os, json, tempfile, time
+import os, json, tempfile
 from pathlib import Path
+
+# Таймауты в мс
+NAV_TIMEOUT = 60000
+ELEMENT_TIMEOUT = 30000
+SHARE_TIMEOUT = 120000
 
 IG_USERNAME = os.environ.get("IG_USERNAME", "")
 IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
@@ -15,12 +20,12 @@ def _save_cookies(context, cookies):
 
 
 async def _login(page, context):
-    await page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle")
-    await page.wait_for_timeout(2000)
+    await page.goto("https://www.instagram.com/accounts/login/", wait_until="networkidle", timeout=NAV_TIMEOUT)
+    await page.wait_for_timeout(3000)
 
     try:
         btn = page.locator("text=Allow all cookies").first
-        if await btn.is_visible(timeout=3000):
+        if await btn.is_visible(timeout=5000):
             await btn.click()
             await page.wait_for_timeout(1000)
     except Exception:
@@ -29,13 +34,13 @@ async def _login(page, context):
     await page.fill('input[name="username"]', IG_USERNAME)
     await page.fill('input[name="password"]', IG_PASSWORD)
     await page.click('button[type="submit"]')
-    await page.wait_for_url("**/instagram.com/**", timeout=15000)
-    await page.wait_for_timeout(3000)
+    await page.wait_for_url("**/instagram.com/**", timeout=NAV_TIMEOUT)
+    await page.wait_for_timeout(5000)
 
     for label in ("Not now", "Not Now"):
         try:
             btn = page.locator(f"text={label}").first
-            if await btn.is_visible(timeout=2000):
+            if await btn.is_visible(timeout=3000):
                 await btn.click()
                 await page.wait_for_timeout(1000)
         except Exception:
@@ -55,7 +60,15 @@ async def _publish(image_bytes: bytes, caption: str) -> dict:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--disable-extensions",
+                    "--single-process",
+                ],
             )
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 900},
@@ -66,13 +79,15 @@ async def _publish(image_bytes: bytes, caption: str) -> dict:
                 ),
             )
             page = await context.new_page()
+            page.set_default_timeout(ELEMENT_TIMEOUT)
+            page.set_default_navigation_timeout(NAV_TIMEOUT)
 
             logged_in = False
             if COOKIES_FILE.exists():
                 try:
                     await context.add_cookies(json.loads(COOKIES_FILE.read_text()))
-                    await page.goto("https://www.instagram.com/", wait_until="networkidle")
-                    await page.wait_for_timeout(2000)
+                    await page.goto("https://www.instagram.com/", wait_until="networkidle", timeout=NAV_TIMEOUT)
+                    await page.wait_for_timeout(3000)
                     if "login" not in page.url:
                         logged_in = True
                 except Exception:
@@ -80,33 +95,33 @@ async def _publish(image_bytes: bytes, caption: str) -> dict:
 
             if not logged_in:
                 await _login(page, context)
-                await page.goto("https://www.instagram.com/", wait_until="networkidle")
-                await page.wait_for_timeout(2000)
+                await page.goto("https://www.instagram.com/", wait_until="networkidle", timeout=NAV_TIMEOUT)
+                await page.wait_for_timeout(3000)
 
             # Кнопка создания поста
             create_btn = page.locator('[aria-label="New post"]').first
-            await create_btn.wait_for(timeout=10000)
+            await create_btn.wait_for(timeout=ELEMENT_TIMEOUT)
             await create_btn.click()
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(2000)
 
             try:
                 post_option = page.locator("text=Post").first
-                if await post_option.is_visible(timeout=3000):
+                if await post_option.is_visible(timeout=5000):
                     await post_option.click()
                     await page.wait_for_timeout(1000)
             except Exception:
                 pass
 
             # Загрузка файла
-            async with page.expect_file_chooser() as fc_info:
+            async with page.expect_file_chooser(timeout=ELEMENT_TIMEOUT) as fc_info:
                 await page.locator('[aria-label="New post"]').first.click()
             file_chooser = await fc_info.value
             await file_chooser.set_files(tmp_path)
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(4000)
 
             try:
                 ok_btn = page.locator("text=OK").first
-                if await ok_btn.is_visible(timeout=2000):
+                if await ok_btn.is_visible(timeout=3000):
                     await ok_btn.click()
                     await page.wait_for_timeout(1000)
             except Exception:
@@ -115,22 +130,22 @@ async def _publish(image_bytes: bytes, caption: str) -> dict:
             # Next → Next
             for _ in range(2):
                 next_btn = page.locator("text=Next").first
-                await next_btn.wait_for(timeout=10000)
+                await next_btn.wait_for(timeout=ELEMENT_TIMEOUT)
                 await next_btn.click()
-                await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(2000)
 
             # Caption
             caption_box = page.locator('div[aria-label="Write a caption..."]').first
-            await caption_box.wait_for(timeout=10000)
+            await caption_box.wait_for(timeout=ELEMENT_TIMEOUT)
             await caption_box.click()
             await caption_box.type(caption, delay=30)
             await page.wait_for_timeout(1000)
 
             # Share
             share_btn = page.locator("text=Share").first
-            await share_btn.wait_for(timeout=10000)
+            await share_btn.wait_for(timeout=ELEMENT_TIMEOUT)
             await share_btn.click()
-            await page.wait_for_selector("text=Your post has been shared", timeout=60000)
+            await page.wait_for_selector("text=Your post has been shared", timeout=SHARE_TIMEOUT)
             await page.wait_for_timeout(2000)
 
             _save_cookies(context, await context.cookies())
