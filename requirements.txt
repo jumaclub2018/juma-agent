@@ -3,3 +3,4 @@ python-telegram-bot[job-queue]
 psycopg2-binary
 requests
 instagrapi
+pyotp

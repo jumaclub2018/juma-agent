@@ -3,17 +3,18 @@ from pathlib import Path
 from typing import Optional
 
 IG_USERNAME = os.environ.get("IG_USERNAME", "")
+IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
 IG_SESSION = os.environ.get("IG_SESSION", "")
+IG_TOTP_SECRET = os.environ.get("IG_TOTP_SECRET", "")  # TOTP секрет для авто-2FA
 
-# Локальный файл для сохранения обновлённой сессии внутри контейнера Railway.
-# Переживает перезапуски кода, но не передеплои.
 SESSION_FILE = Path("/tmp/ig_session_cache.json")
 
 _client = None
 
+LOGIN_REQUIRED_MARKERS = ("login_required", "LoginRequired", "login required", "Not authorized")
+
 
 def _save_session(cl):
-    """Сохраняет обновлённую сессию в файл — токены обновляются после каждого запроса."""
     try:
         SESSION_FILE.write_text(json.dumps(cl.get_settings()))
     except Exception:
@@ -21,7 +22,6 @@ def _save_session(cl):
 
 
 def _load_settings():
-    """Загружает сессию: сначала из файла (свежее), потом из env."""
     if SESSION_FILE.exists():
         try:
             return json.loads(SESSION_FILE.read_text())
@@ -37,7 +37,45 @@ def _load_settings():
     except json.JSONDecodeError:
         raise RuntimeError(
             f"IG_SESSION содержит невалидный JSON: '{IG_SESSION[:40]}...'\n"
-            "Запусти get_ig_session.py заново и обнови IG_SESSION в Railway Variables."
+            "Запусти get_ig_session.py заново."
+        )
+
+
+def _totp_code():
+    """Генерирует TOTP код если задан IG_TOTP_SECRET."""
+    if not IG_TOTP_SECRET:
+        return None
+    try:
+        import pyotp
+        return pyotp.TOTP(IG_TOTP_SECRET).now()
+    except ImportError:
+        return None
+
+
+def _do_login(cl):
+    """Полный логин с поддержкой 2FA через TOTP."""
+    from instagrapi.exceptions import TwoFactorRequired
+
+    if not IG_USERNAME or not IG_PASSWORD:
+        raise RuntimeError(
+            "Для авто-перелогина нужны IG_USERNAME и IG_PASSWORD в Railway Variables."
+        )
+
+    try:
+        cl.login(IG_USERNAME, IG_PASSWORD)
+    except TwoFactorRequired:
+        code = _totp_code()
+        if not code:
+            raise RuntimeError(
+                "Сессия истекла, Instagram требует 2FA, но IG_TOTP_SECRET не задан.\n"
+                "Добавь TOTP секрет в Railway Variables или пересоздай сессию вручную."
+            )
+        two_factor_info = cl.last_json.get("two_factor_info", {})
+        cl.two_factor_login(
+            verification_code=code,
+            two_factor_identifier=two_factor_info.get("two_factor_identifier", ""),
+            username=IG_USERNAME,
+            identifier_type="1",
         )
 
 
@@ -45,14 +83,20 @@ def _build_client():
     from instagrapi import Client
     cl = Client()
     cl.delay_range = [1, 3]
-    cl.set_settings(_load_settings())
+
     try:
+        cl.set_settings(_load_settings())
         cl.get_timeline_feed()
     except Exception as e:
-        raise RuntimeError(
-            f"Сессия устарела или невалидна: {e}\n"
-            "Запусти get_ig_session.py заново и обнови IG_SESSION в Railway Variables."
-        )
+        if any(m in str(e) for m in LOGIN_REQUIRED_MARKERS):
+            # Сессия истекла — перелогиниваемся
+            SESSION_FILE.unlink(missing_ok=True)
+            cl = Client()
+            cl.delay_range = [1, 3]
+            _do_login(cl)
+        else:
+            raise RuntimeError(f"Не удалось инициализировать Instagram клиент: {e}")
+
     _save_session(cl)
     return cl
 
@@ -65,10 +109,21 @@ def get_client():
 
 
 def _reset_client():
-    """Сбрасывает кэш клиента — следующий вызов get_client() пересоздаст сессию."""
     global _client
     _client = None
     SESSION_FILE.unlink(missing_ok=True)
+
+
+def _handle_error(e, cl):
+    """Возвращает True если стоит повторить попытку после сброса сессии."""
+    if any(m in str(e) for m in LOGIN_REQUIRED_MARKERS):
+        _reset_client()
+        try:
+            globals()["_client"] = _build_client()
+        except Exception:
+            pass
+        return True
+    return False
 
 
 def publish_photo(image_bytes: bytes, caption: str) -> dict:
@@ -93,18 +148,9 @@ def publish_photo(image_bytes: bytes, caption: str) -> dict:
                 }
             except Exception as e:
                 last_error = e
-                error_str = str(e)
-
-                # Сессия истекла — сбрасываем и пробуем переподключиться
-                if any(x in error_str for x in ("login_required", "LoginRequired", "login required")):
-                    _reset_client()
-                    try:
-                        cl = get_client()
-                    except Exception:
-                        break
-
-                # Фото иногда всё-таки публикуется несмотря на ошибку — проверяем ленту
-                elif "succeeded without media payload" in error_str:
+                if _handle_error(e, cl):
+                    cl = get_client()
+                elif "succeeded without media payload" in str(e):
                     try:
                         recent = cl.user_medias(cl.user_id, 1)
                         if recent:
