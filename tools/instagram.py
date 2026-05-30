@@ -1,4 +1,5 @@
 import os, requests, base64
+from typing import Optional
 
 SMMPLANNER_TOKEN = os.environ.get("SMMPLANNER_TOKEN", "")
 SMMPLANNER_ACCOUNT_ID = os.environ.get("SMMPLANNER_ACCOUNT_ID", "")
@@ -10,7 +11,7 @@ def _headers():
     return {"Authorization": f"Bearer {SMMPLANNER_TOKEN}"}
 
 
-def upload_image(image_bytes: bytes) -> str | None:
+def upload_image(image_bytes: bytes) -> Optional[str]:
     """Загружаем фото в SMMplanner, получаем ID файла."""
     resp = requests.post(
         f"{API_URL}/file",
@@ -23,7 +24,7 @@ def upload_image(image_bytes: bytes) -> str | None:
     return None
 
 
-def publish_photo(image_bytes: bytes, caption: str, schedule_time: str | None = None) -> dict:
+def publish_photo(image_bytes: bytes, caption: str, schedule_time: Optional[str] = None) -> dict:
     """
     Публикуем фото в Instagram через SMMplanner.
     schedule_time — ISO строка '2025-06-01 18:00' для отложенной публикации.

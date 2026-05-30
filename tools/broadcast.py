@@ -1,6 +1,7 @@
 import os, psycopg2
 from psycopg2.extras import RealDictCursor
 from telegram import Bot
+from typing import Optional
 
 PARENT_BOT_TOKEN = os.environ.get("PARENT_BOT_TOKEN", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -10,7 +11,7 @@ def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
 
-async def send_broadcast(message: str, hall: str | None = None) -> str:
+async def send_broadcast(message: str, hall: Optional[str] = None) -> str:
     """Рассылка родителям. hall=None — всем, иначе только зала."""
     conn = get_conn()
     cur = conn.cursor(cursor_factory=RealDictCursor)
