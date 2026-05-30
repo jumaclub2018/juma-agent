@@ -8,7 +8,7 @@
 Туннель (постоянный URL, бесплатно):
     cloudflared tunnel --url http://localhost:8765
 """
-import os, json, hmac, hashlib
+import os, json, hmac, hashlib, re, traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from tools.instagram_instagrapi import publish_photo
 
@@ -24,23 +24,41 @@ def _check_auth(handler) -> bool:
 
 
 def _parse_multipart(handler):
-    """Парсит multipart/form-data вручную через cgi."""
-    import cgi, io
+    """Парсит multipart/form-data без cgi — работает с бинарными данными."""
     content_type = handler.headers.get("Content-Type", "")
     length = int(handler.headers.get("Content-Length", 0))
     body = handler.rfile.read(length)
-    environ = {
-        "REQUEST_METHOD": "POST",
-        "CONTENT_TYPE": content_type,
-        "CONTENT_LENGTH": str(length),
-    }
-    form = cgi.FieldStorage(
-        fp=io.BytesIO(body),
-        environ=environ,
-        keep_blank_values=True,
-    )
-    photo = form["photo"].file.read() if "photo" in form else None
-    caption = form["caption"].value if "caption" in form else ""
+
+    # Извлекаем boundary
+    m = re.search(r'boundary=([^\s;]+)', content_type)
+    if not m:
+        raise ValueError(f"boundary не найден в Content-Type: {content_type}")
+    boundary = ("--" + m.group(1)).encode()
+
+    photo = None
+    caption = ""
+
+    for part in body.split(boundary):
+        if b"Content-Disposition" not in part:
+            continue
+        # Разделяем заголовки и тело части двойным CRLF
+        if b"\r\n\r\n" in part:
+            headers_raw, _, value = part.partition(b"\r\n\r\n")
+        else:
+            continue
+        value = value.rstrip(b"\r\n--")
+        headers_raw = headers_raw.decode("utf-8", errors="replace")
+
+        name_m = re.search(r'name="([^"]+)"', headers_raw)
+        if not name_m:
+            continue
+        name = name_m.group(1)
+
+        if name == "photo":
+            photo = value
+        elif name == "caption":
+            caption = value.decode("utf-8", errors="replace")
+
     return photo, caption
 
 
@@ -81,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             self._respond(200 if result["ok"] else 500, result)
 
         except Exception as e:
+            traceback.print_exc()
             self._respond(500, {"ok": False, "error": str(e)})
 
 
