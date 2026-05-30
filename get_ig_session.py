@@ -4,8 +4,12 @@
 Запуск:
     python get_ig_session.py
 
-После успешной авторизации скопируй выведенный JSON в Railway Variables
-как переменную IG_SESSION.
+Если Instagram авторизует не тот аккаунт — используй вход через sessionid из браузера:
+    1. Открой instagram.com, войди как нужный аккаунт
+    2. DevTools → Application → Cookies → instagram.com → sessionid
+    3. Запусти: python get_ig_session.py --sessionid <значение>
+
+После авторизации скопируй JSON в Railway Variables как IG_SESSION.
 """
 import json
 import os
@@ -19,8 +23,37 @@ except ImportError:
     sys.exit(1)
 
 
+def verify_account(cl, expected_username=None):
+    """Проверяет реальный аккаунт сессии и выводит username."""
+    try:
+        info = cl.user_info(cl.user_id)
+        actual = info.username
+    except Exception:
+        actual = str(cl.user_id)
+
+    print(f"\n📱 Аккаунт в сессии: @{actual}")
+
+    if expected_username and actual.lower() != expected_username.lower():
+        print(f"⚠️  ВНИМАНИЕ: ожидался @{expected_username}, но сессия от @{actual}!")
+        confirm = input("Продолжить и сохранить эту сессию? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Отменено.")
+            sys.exit(1)
+
+    return actual
+
+
+def login_by_sessionid(cl, sessionid):
+    """Вход через sessionid из браузера — гарантирует нужный аккаунт."""
+    try:
+        cl.login_by_sessionid(sessionid)
+    except Exception as e:
+        print(f"❌ Ошибка входа по sessionid: {e}")
+        sys.exit(1)
+
+
 def login_with_2fa(cl, username, password):
-    """Вход с поддержкой 2FA через SMS или TOTP-приложение."""
+    """Вход через логин/пароль с поддержкой 2FA."""
     try:
         cl.login(username, password)
         return
@@ -45,8 +78,6 @@ def login_with_2fa(cl, username, password):
                 print("Код не может быть пустым, попробуй ещё раз.")
                 continue
             try:
-                # Используем two_factor_login — работает с внутренним состоянием
-                # сохранённым после первой попытки входа
                 cl.two_factor_login(
                     verification_code=code,
                     two_factor_identifier=two_factor_info.get("two_factor_identifier", ""),
@@ -79,14 +110,9 @@ def login_with_2fa(cl, username, password):
 
 
 def get_session():
-    username = os.environ.get("IG_USERNAME") or input("Instagram username: ").strip()
-    password = os.environ.get("IG_PASSWORD") or input("Instagram password: ").strip()
-
     cl = Client()
     cl.delay_range = [1, 3]
 
-    # Прокси: из env или ввод вручную
-    # Форматы: http://user:pass@host:port  или  socks5://host:port
     proxy = os.environ.get("IG_PROXY") or input(
         "Прокси (Enter чтобы пропустить) [http://user:pass@host:port]: "
     ).strip()
@@ -94,12 +120,32 @@ def get_session():
         cl.set_proxy(proxy)
         print(f"Прокси установлен: {proxy}")
 
-    login_with_2fa(cl, username, password)
+    # Выбор метода входа
+    sessionid = None
+    if "--sessionid" in sys.argv:
+        idx = sys.argv.index("--sessionid")
+        if idx + 1 < len(sys.argv):
+            sessionid = sys.argv[idx + 1]
+
+    if not sessionid:
+        sessionid = os.environ.get("IG_SESSIONID", "").strip()
+
+    if sessionid:
+        print(f"\n🔑 Вход через sessionid из браузера...")
+        login_by_sessionid(cl, sessionid)
+        actual = verify_account(cl)
+    else:
+        print("\n💡 Совет: если Instagram авторизует не тот аккаунт,")
+        print("   используй --sessionid <куки из браузера>\n")
+        username = os.environ.get("IG_USERNAME") or input("Instagram username: ").strip()
+        password = os.environ.get("IG_PASSWORD") or input("Instagram password: ").strip()
+        login_with_2fa(cl, username, password)
+        actual = verify_account(cl, expected_username=username)
 
     session = cl.get_settings()
     session_str = json.dumps(session)
 
-    print(f"\n✅ Авторизация успешна! Аккаунт: @{username}")
+    print(f"\n✅ Сессия готова! Аккаунт: @{actual}")
     print("\n" + "=" * 60)
     print("Добавь в Railway Variables:")
     print("  Имя переменной : IG_SESSION")
