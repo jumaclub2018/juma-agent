@@ -2,7 +2,7 @@ import os, json, anthropic
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
-from tools.instagram_instagrapi import publish_photo, resolve_challenge
+from tools.instagram_playwright import publish_photo
 from tools.broadcast import send_broadcast
 
 TELEGRAM_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
@@ -13,8 +13,6 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 # Фото ожидающее публикации: {uid: bytes}
 pending_photos: dict = {}
-# Данные для повтора публикации после challenge: {uid: {"photo": bytes, "caption": str}}
-pending_challenge: dict = {}
 
 TOOLS = [
     {
@@ -141,11 +139,6 @@ async def run_agent(update: Update, user_text: str):
                         pub = publish_photo(photo_bytes, caption)
                         if pub["ok"]:
                             result = f"✅ Опубликовано!\n{pub['url']}"
-                        elif pub.get("challenge"):
-                            # Сохраняем фото и caption для повтора после ввода кода
-                            pending_challenge[uid] = {"photo": photo_bytes, "caption": caption}
-                            await update.message.reply_text("🔐 " + pub["error"])
-                            return
                         else:
                             result = f"❌ Ошибка: {pub['error']}"
 
@@ -171,21 +164,6 @@ async def handle_text(update: Update, context):
 
     uid = update.message.chat_id
     text = update.message.text.strip()
-
-    # Если ждём код challenge — обрабатываем его
-    if uid in pending_challenge:
-        data = pending_challenge.pop(uid)
-        res = resolve_challenge(text)
-        if not res["ok"]:
-            await update.message.reply_text(f"❌ Неверный код: {res['error']}")
-            return
-        await update.message.reply_text("✅ Подтверждение прошло! Публикую...")
-        pub = publish_photo(data["photo"], data["caption"])
-        if pub["ok"]:
-            await update.message.reply_text(f"✅ Опубликовано!\n{pub['url']}")
-        else:
-            await update.message.reply_text(f"❌ Ошибка публикации: {pub['error']}")
-        return
 
     await run_agent(update, text)
 
