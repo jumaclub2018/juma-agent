@@ -5,13 +5,16 @@ from typing import Optional
 IG_USERNAME = os.environ.get("IG_USERNAME", "")
 IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
 IG_SESSION = os.environ.get("IG_SESSION", "")
-IG_TOTP_SECRET = os.environ.get("IG_TOTP_SECRET", "")  # TOTP секрет для авто-2FA
+IG_TOTP_SECRET = os.environ.get("IG_TOTP_SECRET", "")
 
 SESSION_FILE = Path("/tmp/ig_session_cache.json")
 
 _client = None
+# Клиент сохраняется во время ожидания кода challenge
+_challenge_client = None
 
 LOGIN_REQUIRED_MARKERS = ("login_required", "LoginRequired", "login required", "Not authorized")
+CHALLENGE_MARKERS = ("challenge_required", "ChallengeRequired", "challenge required")
 
 
 def _save_session(cl):
@@ -42,7 +45,6 @@ def _load_settings():
 
 
 def _totp_code():
-    """Генерирует TOTP код если задан IG_TOTP_SECRET."""
     if not IG_TOTP_SECRET:
         return None
     try:
@@ -53,14 +55,11 @@ def _totp_code():
 
 
 def _do_login(cl):
-    """Полный логин с поддержкой 2FA через TOTP."""
     from instagrapi.exceptions import TwoFactorRequired
-
     if not IG_USERNAME or not IG_PASSWORD:
         raise RuntimeError(
             "Для авто-перелогина нужны IG_USERNAME и IG_PASSWORD в Railway Variables."
         )
-
     try:
         cl.login(IG_USERNAME, IG_PASSWORD)
     except TwoFactorRequired:
@@ -83,20 +82,17 @@ def _build_client():
     from instagrapi import Client
     cl = Client()
     cl.delay_range = [1, 3]
-
     try:
         cl.set_settings(_load_settings())
         cl.get_timeline_feed()
     except Exception as e:
         if any(m in str(e) for m in LOGIN_REQUIRED_MARKERS):
-            # Сессия истекла — перелогиниваемся
             SESSION_FILE.unlink(missing_ok=True)
             cl = Client()
             cl.delay_range = [1, 3]
             _do_login(cl)
         else:
             raise RuntimeError(f"Не удалось инициализировать Instagram клиент: {e}")
-
     _save_session(cl)
     return cl
 
@@ -114,16 +110,70 @@ def _reset_client():
     SESSION_FILE.unlink(missing_ok=True)
 
 
-def _handle_error(e, cl):
-    """Возвращает True если стоит повторить попытку после сброса сессии."""
-    if any(m in str(e) for m in LOGIN_REQUIRED_MARKERS):
+def _initiate_challenge(cl):
+    """Инициирует challenge — Instagram отправляет код на email/SMS."""
+    try:
+        cl.challenge_resolve(cl.last_json)
+        return True
+    except Exception:
+        return False
+
+
+def resolve_challenge(code: str) -> dict:
+    """
+    Принимает код из SMS/email и завершает challenge.
+    Вызывается из bot.py когда пользователь вводит код.
+    """
+    global _client, _challenge_client
+    cl = _challenge_client or _client
+    if cl is None:
+        return {"ok": False, "error": "Нет активного challenge. Попробуй опубликовать заново."}
+    try:
+        cl.challenge_resolve_code(int(code.strip()))
+        _save_session(cl)
+        _client = cl
+        _challenge_client = None
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _handle_exception(e, cl):
+    """
+    Обрабатывает исключения при публикации.
+    Возвращает dict с результатом или None если нужно повторить попытку.
+    """
+    global _challenge_client
+    error_str = str(e)
+
+    # Challenge — Instagram требует подтверждение через SMS/email
+    if any(m in error_str for m in CHALLENGE_MARKERS):
+        _challenge_client = cl
+        initiated = _initiate_challenge(cl)
+        method = cl.last_json.get("challenge", {}).get("flow_render_type", "")
+        hint = "на email или SMS" if not method else f"(тип: {method})"
+        if initiated:
+            return {
+                "ok": False,
+                "challenge": True,
+                "error": f"Instagram требует подтверждение {hint}.\nВведи код который пришёл:"
+            }
+        return {
+            "ok": False,
+            "challenge": True,
+            "error": "Instagram заблокировал публикацию через challenge.\nОткрой приложение Instagram и подтверди вход, затем попробуй снова."
+        }
+
+    # Сессия истекла — сбрасываем и пробуем переподключиться
+    if any(m in error_str for m in LOGIN_REQUIRED_MARKERS):
         _reset_client()
         try:
             globals()["_client"] = _build_client()
         except Exception:
             pass
-        return True
-    return False
+        return None  # повторить попытку
+
+    return None
 
 
 def publish_photo(image_bytes: bytes, caption: str) -> dict:
@@ -148,9 +198,13 @@ def publish_photo(image_bytes: bytes, caption: str) -> dict:
                 }
             except Exception as e:
                 last_error = e
-                if _handle_error(e, cl):
-                    cl = get_client()
-                elif "succeeded without media payload" in str(e):
+                handled = _handle_exception(e, cl)
+                if handled is not None:
+                    tmp_path.unlink(missing_ok=True)
+                    return handled
+                cl = get_client()
+
+                if "succeeded without media payload" in str(e):
                     try:
                         recent = cl.user_medias(cl.user_id, 1)
                         if recent:
