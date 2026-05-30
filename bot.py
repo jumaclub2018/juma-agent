@@ -136,7 +136,7 @@ async def run_agent(update: Update, user_text: str):
                         result = "❌ Нет фото для публикации. Отправь фото вместе с запросом."
                     else:
                         pending_photos.pop(uid, None)
-                        pub = publish_photo(photo_bytes, caption)
+                        pub = await publish_photo(photo_bytes, caption)
                         if pub["ok"]:
                             result = f"✅ Опубликовано!\n{pub['url']}"
                         else:
