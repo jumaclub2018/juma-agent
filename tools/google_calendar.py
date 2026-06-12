@@ -1,5 +1,5 @@
 import os, json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
 GOOGLE_TOKEN_JSON = os.environ.get("GOOGLE_TOKEN_JSON", "")
@@ -68,5 +68,67 @@ def create_event(
             "end": end_dt.strftime("%H:%M"),
         }
 
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def list_events(date_from: str, date_to: str) -> dict:
+    """
+    Список событий за период.
+    date_from, date_to: YYYY-MM-DD
+    Возвращает список {"id", "title", "date", "time_start", "time_end"}.
+    """
+    try:
+        service = _get_service()
+
+        # Google Calendar API требует RFC3339 с часовым поясом
+        time_min = f"{date_from}T00:00:00+03:00"
+        time_max = f"{date_to}T23:59:59+03:00"
+
+        result = service.events().list(
+            calendarId=CALENDAR_ID,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=50,
+        ).execute()
+
+        events = []
+        for e in result.get("items", []):
+            start = e.get("start", {})
+            end   = e.get("end", {})
+            # Событие может быть весь день (date) или конкретное время (dateTime)
+            if "dateTime" in start:
+                dt_start = datetime.fromisoformat(start["dateTime"])
+                dt_end   = datetime.fromisoformat(end["dateTime"])
+                time_start = dt_start.strftime("%H:%M")
+                time_end   = dt_end.strftime("%H:%M")
+                date_str   = dt_start.strftime("%d.%m.%Y")
+            else:
+                date_str   = start.get("date", "")
+                time_start = "весь день"
+                time_end   = ""
+
+            events.append({
+                "id":         e["id"],
+                "title":      e.get("summary", "(без названия)"),
+                "date":       date_str,
+                "time_start": time_start,
+                "time_end":   time_end,
+            })
+
+        return {"ok": True, "events": events}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def delete_event(event_id: str) -> dict:
+    """Удаляет событие по id. Возвращает {"ok": True} или {"ok": False, "error": ...}."""
+    try:
+        service = _get_service()
+        service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
+        return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}

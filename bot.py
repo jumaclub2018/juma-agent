@@ -5,7 +5,11 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
 from tools.instagram_local_agent import publish_photo
 from tools.broadcast import send_broadcast
-from tools.google_calendar import create_event as calendar_create_event
+from tools.google_calendar import (
+    create_event as calendar_create_event,
+    list_events as calendar_list_events,
+    delete_event as calendar_delete_event,
+)
 
 TELEGRAM_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
@@ -15,6 +19,8 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 # Фото ожидающее публикации: {uid: bytes}
 pending_photos: dict = {}
+# История диалога per-user для многошаговых сценариев (подтверждение удаления и т.п.)
+conversations: dict = {}
 
 TOOLS = [
     {
@@ -79,6 +85,35 @@ TOOLS = [
         }
     },
     {
+        "name": "list_calendar_events",
+        "description": (
+            "Показать события Google Calendar за период. "
+            "Используй ПЕРЕД удалением — чтобы найти нужное событие и показать пользователю."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": "Начало периода YYYY-MM-DD"},
+                "date_to":   {"type": "string", "description": "Конец периода YYYY-MM-DD"},
+            },
+            "required": ["date_from", "date_to"]
+        }
+    },
+    {
+        "name": "delete_calendar_event",
+        "description": (
+            "Удалить событие из Google Calendar по его id. "
+            "НИКОГДА не вызывай без явного подтверждения пользователя ('да', 'удали', 'подтверждаю')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "description": "ID события из list_calendar_events"},
+            },
+            "required": ["event_id"]
+        }
+    },
+    {
         "name": "send_broadcast",
         "description": "Отправить сообщение родителям через бот.",
         "input_schema": {
@@ -105,13 +140,26 @@ def _build_system() -> str:
 - Составь caption внутри вызова инструмента, не отправляй его отдельным сообщением.
 - Не спрашивай подтверждения — публикуй сразу.
 
+Правило удаления событий Calendar:
+- При запросе на удаление: сначала вызови list_calendar_events, найди подходящее событие.
+- Покажи пользователю: название, дата, время — и спроси подтверждение.
+- Если подходит несколько событий — покажи список и спроси какое именно.
+- delete_calendar_event вызывай ТОЛЬКО после явного "да" / "удали" / "подтверждаю".
+
 Язык: русский."""
 
 
 async def run_agent(update: Update, user_text: str):
     uid = update.message.chat_id
     photo_bytes = pending_photos.get(uid)
-    messages = [{"role": "user", "content": user_text}]
+
+    # Сохраняем историю для многошаговых сценариев (подтверждение удаления и т.п.)
+    history = conversations.setdefault(uid, [])
+    history.append({"role": "user", "content": user_text})
+    if len(history) > 20:
+        history[:] = history[-20:]
+    messages = list(history)
+
     await update.message.reply_text("⏳")
 
     while True:
@@ -126,6 +174,7 @@ async def run_agent(update: Update, user_text: str):
         if response.stop_reason == "end_turn":
             text = next((b.text for b in response.content if hasattr(b, "text")), "—")
             await update.message.reply_text(text)
+            history.append({"role": "assistant", "content": text})
             break
 
         if response.stop_reason == "tool_use":
@@ -175,6 +224,28 @@ async def run_agent(update: Update, user_text: str):
                         result = f"✅ Событие создано: {ev['start']}–{ev['end']}\n{ev['url']}"
                     else:
                         result = f"❌ Ошибка: {ev['error']}"
+
+                elif name == "list_calendar_events":
+                    ev = calendar_list_events(
+                        date_from=inp["date_from"],
+                        date_to=inp["date_to"],
+                    )
+                    if ev["ok"]:
+                        events = ev["events"]
+                        if not events:
+                            result = "Событий за этот период не найдено."
+                        else:
+                            lines = [f"{e['date']} {e['time_start']}–{e['time_end']}  {e['title']}  (id: {e['id']})" for e in events]
+                            result = "Найдены события:\n" + "\n".join(lines)
+                    else:
+                        result = f"❌ Ошибка: {ev['error']}"
+
+                elif name == "delete_calendar_event":
+                    ev = calendar_delete_event(event_id=inp["event_id"])
+                    if ev["ok"]:
+                        result = "✅ Событие удалено."
+                    else:
+                        result = f"❌ Ошибка удаления: {ev['error']}"
 
                 elif name == "send_broadcast":
                     hall = inp.get("hall") or None
