@@ -1,9 +1,11 @@
 import os, json, anthropic
+from datetime import date
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
 from tools.instagram_local_agent import publish_photo
 from tools.broadcast import send_broadcast
+from tools.google_calendar import create_event as calendar_create_event
 
 TELEGRAM_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
@@ -62,6 +64,21 @@ TOOLS = [
         }
     },
     {
+        "name": "create_calendar_event",
+        "description": "Создать событие в Google Calendar. Используй когда пользователь говорит 'добавь', 'запланируй', 'поставь' тренировку или событие.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title":            {"type": "string",  "description": "Название события"},
+                "date":             {"type": "string",  "description": "Дата в формате YYYY-MM-DD"},
+                "time":             {"type": "string",  "description": "Время начала HH:MM"},
+                "duration_minutes": {"type": "integer", "description": "Длительность в минутах (по умолчанию 60)"},
+                "description":      {"type": "string",  "description": "Описание события (необязательно)"},
+            },
+            "required": ["title", "date", "time"]
+        }
+    },
+    {
         "name": "send_broadcast",
         "description": "Отправить сообщение родителям через бот.",
         "input_schema": {
@@ -75,9 +92,13 @@ TOOLS = [
     },
 ]
 
-SYSTEM = """Ты личный ИИ-агент владельца клуба дзюдо и самбо Juma Club (Подмосковье).
+def _build_system() -> str:
+    today = date.today().strftime("%Y-%m-%d")
+    return f"""Ты личный ИИ-агент владельца клуба дзюдо и самбо Juma Club (Подмосковье).
 Три зала: ЖК Весна, Селятино, Эко Бунино.
 Отвечай коротко и по делу. Используй инструменты когда нужны данные или действия.
+
+Сегодня: {today} (используй для вычисления дат — «завтра», «в пятницу» и т.д.)
 
 Правило публикации в Instagram:
 - Когда пользователь просит опубликовать фото — ВСЕГДА вызывай инструмент publish_instagram.
@@ -97,7 +118,7 @@ async def run_agent(update: Update, user_text: str):
         response = client.messages.create(
             model="claude-opus-4-5",
             max_tokens=2048,
-            system=SYSTEM,
+            system=_build_system(),
             tools=TOOLS,
             messages=messages,
         )
@@ -141,6 +162,19 @@ async def run_agent(update: Update, user_text: str):
                             result = f"✅ Опубликовано!\n{pub['url']}"
                         else:
                             result = f"❌ Ошибка: {pub['error']}"
+
+                elif name == "create_calendar_event":
+                    ev = calendar_create_event(
+                        title=inp["title"],
+                        date=inp["date"],
+                        time=inp["time"],
+                        duration_minutes=inp.get("duration_minutes", 60),
+                        description=inp.get("description", ""),
+                    )
+                    if ev["ok"]:
+                        result = f"✅ Событие создано: {ev['start']}–{ev['end']}\n{ev['url']}"
+                    else:
+                        result = f"❌ Ошибка: {ev['error']}"
 
                 elif name == "send_broadcast":
                     hall = inp.get("hall") or None
