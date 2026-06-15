@@ -3,8 +3,8 @@ from datetime import date
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
 
-STT_URL   = os.environ.get("STT_URL", "").rstrip("/")   # IG_AGENT_URL или отдельный URL
-STT_TOKEN = os.environ.get("STT_TOKEN", "")
+IG_AGENT_URL    = os.environ.get("IG_AGENT_URL", "").rstrip("/")
+IG_AGENT_SECRET = os.environ.get("IG_AGENT_SECRET", "")
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
 from tools.instagram_local_agent import publish_photo
 from tools.broadcast import send_broadcast
@@ -359,7 +359,7 @@ async def handle_voice(update: Update, context):
     if update.message.chat_id != OWNER_ID:
         return
 
-    if not STT_URL:
+    if not IG_AGENT_URL:
         await update.message.reply_text("🎙️ Голосовые сообщения пока не настроены. Напиши текстом.")
         return
 
@@ -371,11 +371,11 @@ async def handle_voice(update: Update, context):
         audio_bytes = await tg_file.download_as_bytearray()
 
         resp = requests.post(
-            f"{STT_URL}/transcribe",
+            f"{IG_AGENT_URL}/transcribe",
             data=bytes(audio_bytes),
             headers={
                 "Content-Type": "audio/ogg",
-                "X-Agent-Secret": STT_TOKEN,
+                "X-Agent-Secret": IG_AGENT_SECRET,
             },
             timeout=60,
         )
