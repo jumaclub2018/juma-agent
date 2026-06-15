@@ -11,16 +11,15 @@
         <string>http</string>
         <string>8765</string>
         <string>--domain</string>
-        <!-- ЗАМЕНИ на твой статический домен из dashboard.ngrok.com/domains -->
-        <string>REPLACE_WITH_YOUR_NGROK_DOMAIN</string>
+        <string>detract-sleet-iron.ngrok-free.dev</string>
         <string>--log</string>
         <string>/Users/egorzukov/juma-agent/logs/ngrok.log</string>
     </array>
 
-    <key>KeepAlive</key>
+    <key>RunAtLoad</key>
     <true/>
 
-    <key>RunAtLoad</key>
+    <key>KeepAlive</key>
     <true/>
 
     <key>StandardOutPath</key>
