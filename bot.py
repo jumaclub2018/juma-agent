@@ -1,7 +1,10 @@
-import os, json, anthropic
+import os, json, anthropic, requests
 from datetime import date
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
+
+STT_URL   = os.environ.get("STT_URL", "").rstrip("/")   # IG_AGENT_URL или отдельный URL
+STT_TOKEN = os.environ.get("STT_TOKEN", "")
 from tools.analytics import get_attendance_report, get_finance_report, get_leads_report, get_students_list
 from tools.instagram_local_agent import publish_photo
 from tools.broadcast import send_broadcast
@@ -352,6 +355,50 @@ async def handle_photo(update: Update, context):
         )
 
 
+async def handle_voice(update: Update, context):
+    if update.message.chat_id != OWNER_ID:
+        return
+
+    if not STT_URL:
+        await update.message.reply_text("🎙️ Голосовые сообщения пока не настроены. Напиши текстом.")
+        return
+
+    await update.message.reply_text("🎙️ Распознаю голосовое…")
+
+    try:
+        voice = update.message.voice
+        tg_file = await context.bot.get_file(voice.file_id)
+        audio_bytes = await tg_file.download_as_bytearray()
+
+        resp = requests.post(
+            f"{STT_URL}/transcribe",
+            data=bytes(audio_bytes),
+            headers={
+                "Content-Type": "audio/ogg",
+                "X-Agent-Secret": STT_TOKEN,
+            },
+            timeout=60,
+        )
+        result = resp.json()
+    except requests.Timeout:
+        await update.message.reply_text("⏱️ Сервис распознавания не ответил. Напиши текстом.")
+        return
+    except Exception as e:
+        await update.message.reply_text("⚠️ Не удалось распознать голосовое. Напиши текстом.")
+        return
+
+    if not result.get("ok"):
+        await update.message.reply_text("⚠️ Ошибка распознавания. Напиши текстом.")
+        return
+
+    text = result.get("text", "").strip()
+    if not text:
+        await update.message.reply_text("🤔 Не расслышал. Попробуй ещё раз или напиши текстом.")
+        return
+
+    await run_agent(update, text)
+
+
 async def start(update: Update, context):
     if update.message.chat_id != OWNER_ID:
         return
@@ -369,6 +416,7 @@ async def start(update: Update, context):
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 print("Juma Agent запущен!")
