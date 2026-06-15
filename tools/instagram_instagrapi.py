@@ -1,4 +1,4 @@
-import os, json, tempfile, time
+import os, json, tempfile, time, traceback
 from pathlib import Path
 from typing import Optional
 
@@ -197,6 +197,8 @@ def publish_photo(image_bytes: bytes, caption: str) -> dict:
                     "url": f"https://instagram.com/p/{media.code}/"
                 }
             except Exception as e:
+                print(f"[instagrapi] attempt {attempt+1} failed: {e}")
+                traceback.print_exc()
                 last_error = e
                 handled = _handle_exception(e, cl)
                 if handled is not None:
@@ -221,8 +223,11 @@ def publish_photo(image_bytes: bytes, caption: str) -> dict:
                         pass
 
         tmp_path.unlink(missing_ok=True)
+        print(f"[instagrapi] all attempts failed: {last_error}")
         return {"ok": False, "error": str(last_error)}
     except Exception as e:
+        print(f"[instagrapi] publish_photo outer exception: {e}")
+        traceback.print_exc()
         return {"ok": False, "error": str(e)}
 
 

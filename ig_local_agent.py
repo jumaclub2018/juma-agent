@@ -67,9 +67,9 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[ig-agent] {fmt % args}")
 
     def _respond(self, code: int, data: dict):
-        body = json.dumps(data, ensure_ascii=False).encode()
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -95,7 +95,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._respond(400, {"ok": False, "error": "Нет фото"})
                 return
 
+            print(f"[ig-agent] caption ({len(caption)} chars): {caption[:120]!r}")
             result = publish_photo(photo_bytes, caption)
+            if not result.get("ok"):
+                print(f"[ig-agent] publish_photo returned error: {result}")
             self._respond(200 if result["ok"] else 500, result)
 
         except Exception as e:
