@@ -7,40 +7,23 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Library/Developer/CommandLineTools/usr/bin/python3</string>
-        <string>/Users/egorzukov/juma-agent/ig_local_agent.py</string>
+        <string>/bin/bash</string>
+        <string>/Users/egorzukov/juma-agent/launch/run_ig_agent.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
     <string>/Users/egorzukov/juma-agent</string>
 
-    <!-- Переменные окружения (заполни после настройки) -->
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>IG_AGENT_SECRET</key>
-        <string>REPLACE_WITH_YOUR_SECRET</string>
-        <key>STT_MODEL</key>
-        <string>small</string>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
-
-    <!-- Автоматический перезапуск при падении -->
-    <key>KeepAlive</key>
-    <true/>
-
-    <!-- Запуск при входе в систему -->
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Логи -->
+    <key>KeepAlive</key>
+    <true/>
+
     <key>StandardOutPath</key>
     <string>/Users/egorzukov/juma-agent/logs/ig-agent.log</string>
+
     <key>StandardErrorPath</key>
     <string>/Users/egorzukov/juma-agent/logs/ig-agent-err.log</string>
-
-    <!-- Не давать Mac уснуть пока сервис работает -->
-    <key>ProcessType</key>
-    <string>Interactive</string>
 </dict>
 </plist>
