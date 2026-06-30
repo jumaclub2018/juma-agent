@@ -13,7 +13,6 @@ from tools.google_calendar import (
     list_events as calendar_list_events,
     delete_event as calendar_delete_event,
 )
-from tools.yclients import get_clients as yc_get_clients, get_records as yc_get_records
 
 TELEGRAM_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
@@ -115,32 +114,6 @@ TOOLS = [
                 "event_id": {"type": "string", "description": "ID события из list_calendar_events"},
             },
             "required": ["event_id"]
-        }
-    },
-    {
-        "name": "get_yclients_clients",
-        "description": (
-            "Список клиентов из YClients CRM: количество, имена, телефоны. "
-            "Используй когда спрашивают про клиентскую базу, сколько человек занимается, или нужно найти конкретного клиента."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "count": {"type": "integer", "description": "Сколько клиентов запросить (по умолчанию 200)"}
-            }
-        }
-    },
-    {
-        "name": "get_yclients_records",
-        "description": (
-            "Записи (расписание) из YClients на указанную дату. "
-            "Используй когда спрашивают кто записан на тренировку, сколько записей сегодня/завтра/на конкретный день."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date": {"type": "string", "description": "Дата в формате YYYY-MM-DD. Если не указана — берётся сегодня."}
-            }
         }
     },
     {
@@ -276,38 +249,6 @@ async def run_agent(update: Update, user_text: str):
                         result = "✅ Событие удалено."
                     else:
                         result = f"❌ Ошибка удаления: {ev['error']}"
-
-                elif name == "get_yclients_clients":
-                    res = yc_get_clients(count=inp.get("count", 200))
-                    if res.get("ok"):
-                        clients = res["data"]
-                        lines = [
-                            f"• {c.get('name', '—')} | {c.get('phone', '—')}"
-                            for c in clients[:50]
-                        ]
-                        tail = f"\n…и ещё {len(clients) - 50}" if len(clients) > 50 else ""
-                        result = f"Клиентов в YClients: {len(clients)}\n" + "\n".join(lines) + tail
-                    else:
-                        result = f"❌ {res.get('error')}"
-
-                elif name == "get_yclients_records":
-                    target_date = inp.get("date") or date.today().isoformat()
-                    res = yc_get_records(target_date)
-                    if res.get("ok"):
-                        records = res["data"]
-                        if not records:
-                            result = f"Записей на {target_date} нет."
-                        else:
-                            lines = []
-                            for r in records[:30]:
-                                client_name = (r.get("client") or {}).get("name", "—")
-                                staff_name  = (r.get("staff")  or {}).get("name", "—")
-                                dt = r.get("datetime", "—")
-                                lines.append(f"• {dt} | {client_name} → {staff_name}")
-                            tail = f"\n…и ещё {len(records) - 30}" if len(records) > 30 else ""
-                            result = f"Записей на {target_date}: {len(records)}\n" + "\n".join(lines) + tail
-                    else:
-                        result = f"❌ {res.get('error')}"
 
                 elif name == "send_broadcast":
                     hall = inp.get("hall") or None
